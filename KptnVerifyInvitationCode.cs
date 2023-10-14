@@ -1,5 +1,3 @@
-
-using Microsoft.Azure;
 using Azure.Data.Tables;
 using System;
 using System.Collections.Generic;
@@ -14,6 +12,7 @@ using Newtonsoft.Json.Linq;
 using Azure;
 using System.Threading.Tasks;
 using System.Linq.Expressions;
+using System.Linq;
 
 namespace YourNamespace
 {
@@ -23,14 +22,12 @@ namespace YourNamespace
         public string RowKey { get; set; }
         public DateTimeOffset? Timestamp { get; set; }
         public ETag ETag { get; set; }
-        public string Email { get; set; }
-        public string VerificationCode { get; set; }
+        public string EMAIL { get; set; }
+        public string INVITATION_CODE { get; set; }
     }
 
     public static class KptnVerifyInvitationCode
     {
-        private static readonly string[] ValidInvitationCodes = { "invitation-code-1", "invitation-code-2" };
-
         [FunctionName("KptnVerifyInvitationCode")]
         public static async Task<IActionResult> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
@@ -56,32 +53,13 @@ namespace YourNamespace
                 return new UnauthorizedResult();
             }
 
-            // get invitation code from table
-            string tableName = "UserVerificationCode";
-            string storageAccountConnectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
-
-            // Create a TableClient
-            TableClient tableClient = new(storageAccountConnectionString, tableName);
-
-            // Define the query
-            Expression<Func<UserVerificationEntity, bool>> filterExpression = entity =>
-                entity.Email == "example@example.com" &&
-                entity.VerificationCode == "123456";
-
-            string filter = TableClient.CreateQueryFilter(filterExpression);
-
-            // Execute the query
-            await foreach (TableEntity entity in tableClient.QueryAsync<TableEntity>(filter))
-            {
-                log.LogInformation($"Entity found: {entity["EMAIL"]}, {entity["VERIFICATION_CODE"]}");
-            }
-
             var invitationCodeAttributeKey = $"extension_{Environment.GetEnvironmentVariable("B2C_EXTENSIONS_APP_ID")}_InvitationCode";
             var requestBody = new System.IO.StreamReader(req.Body).ReadToEnd();
             var jsonData = JObject.Parse(requestBody);
-            var inviteCode = jsonData[invitationCodeAttributeKey]?.ToString();
+            var invitationCode = jsonData[invitationCodeAttributeKey]?.ToString();
+            var email = jsonData["email"]?.ToString();
 
-            if (string.IsNullOrEmpty(inviteCode))
+            if (string.IsNullOrEmpty(invitationCode))
             {
                 return new BadRequestObjectResult(new
                 {
@@ -92,14 +70,41 @@ namespace YourNamespace
                 });
             }
 
-            if (!Array.Exists(ValidInvitationCodes, code => code.Equals(inviteCode)))
+            if (string.IsNullOrEmpty(email))
             {
                 return new BadRequestObjectResult(new
                 {
                     version = "1.0.0",
                     status = 400,
                     action = "ValidationError",
-                    userMessage = "Your invitation code is invalid. Please try again."
+                    userMessage = "Please provide e-mail."
+                });
+            }
+
+            // get invitation code from azure storage table
+            string tableName = "UserVerificationCode";
+            string storageAccountConnectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
+
+            // Create a TableClient
+            TableClient tableClient = new(storageAccountConnectionString, tableName);
+            // Define the query
+            Expression<Func<UserVerificationEntity, bool>> filterExpression = entity =>
+                entity.EMAIL == email &&
+                entity.INVITATION_CODE == invitationCode;
+
+            string filter = TableClient.CreateQueryFilter(filterExpression);
+            
+            // Execute the query
+            var entity = await tableClient.QueryAsync<UserVerificationEntity>(filter).FirstOrDefaultAsync();
+            
+            if (entity == null || entity.INVITATION_CODE != invitationCode || entity.EMAIL != email)
+            {
+                return new BadRequestObjectResult(new
+                {
+                    version = "1.0.0",
+                    status = 400,
+                    action = "ValidationError",
+                    userMessage = "Please provide correct e-mail and invitation code."
                 });
             }
 
