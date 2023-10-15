@@ -53,7 +53,7 @@ namespace YourNamespace
                 return new UnauthorizedResult();
             }
 
-            var invitationCodeAttributeKey = $"extension_{Environment.GetEnvironmentVariable("B2C_EXTENSIONS_APP_ID")}_InvitationCode";
+            var invitationCodeAttributeKey = $"extension_{Environment.GetEnvironmentVariable("B2C_EXTENSIONS_APP_ID").Replace("-", "")}_InvitationCode";
             var requestBody = new System.IO.StreamReader(req.Body).ReadToEnd();
             var jsonData = JObject.Parse(requestBody);
             var invitationCode = jsonData[invitationCodeAttributeKey]?.ToString();
@@ -70,17 +70,6 @@ namespace YourNamespace
                 });
             }
 
-            if (string.IsNullOrEmpty(email))
-            {
-                return new BadRequestObjectResult(new
-                {
-                    version = "1.0.0",
-                    status = 400,
-                    action = "ValidationError",
-                    userMessage = "Please provide e-mail."
-                });
-            }
-
             // get invitation code from azure storage table
             string tableName = "UserVerificationCode";
             string storageAccountConnectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
@@ -94,6 +83,12 @@ namespace YourNamespace
 
             string filter = TableClient.CreateQueryFilter(filterExpression);
             
+            // Query the table
+            await foreach (var en in tableClient.QueryAsync<TableEntity>())
+            {
+                Console.WriteLine(en);
+            }
+
             // Execute the query
             var entity = await tableClient.QueryAsync<UserVerificationEntity>(filter).FirstOrDefaultAsync();
             
